@@ -111,7 +111,11 @@ class DHCPDISCOVER(DHCPMODEL):
 
 
 class DHCPOFFER(DHCPMODEL):
-        def __init__(self):
+        def __init__(self, args):
+            print(args)
+            DHCP_SERVER = bytes(int(octet) for octet in args.server.split('.'))
+            ROUTER = bytes(int(octet) for octet in args.router.split('.'))
+            OFFER = bytes(int(octet) for octet in args.offer.split('.'))
             self.OP = bytes([0x02])
             self.HTYPE = bytes([0x01])
             self.HLEN = bytes([0x06])
@@ -120,16 +124,16 @@ class DHCPOFFER(DHCPMODEL):
             self.SECS = bytes([0x00, 0x00])
             self.FLAGS = bytes([0x00, 0x00])
             self.CIADDR = bytes([0x00, 0x00, 0x00, 0x00])
-            self.YIADDR = bytes([0xC0, 0xA8, 0x01, 0x65]) 
-            self.SIADDR = bytes([0xC0, 0xA8, 0x01, 0x01]) 
-            self.GIADDR = bytes([0x00, 0x00, 0x00, 0x00])
+            self.YIADDR = OFFER
+            self.SIADDR = DHCP_SERVER
+            self.GIADDR = ROUTER
             self.CHADDR1 = bytes([0xBC, 0x10, 0x7B, 0x69]) 
             self.CHADDR2 = bytes([0x1B, 0xC2, 0x00, 0x00])
             self.CHADDR3 = bytes([0x00, 0x00, 0x00, 0x00]) 
             self.CHADDR4 = bytes([0x00, 0x00, 0x00, 0x00]) 
             self.CHADDR5 = bytes(192)
             self.Magiccookie = bytes([0x63, 0x82, 0x53, 0x63])
-            self.DHCPOptions1 = bytes([53 , 1 , 5]) # DHCP Offer
+            self.DHCPOptions1 = bytes([53 , 1 , 2]) # DHCP Offer
             self.DHCPOptions2 = bytes([1 , 4 , 0xFF, 0xFF, 0xFF, 0x00]) 
             self.DHCPOptions3 = bytes([3 , 4 , 0xC0, 0xA8, 0x01, 0x01]) 
             self.DHCPOptions4 = bytes([51 , 4 , 0x00, 0x01, 0x51, 0x80]) 
@@ -142,23 +146,8 @@ class DHCPREQUEST(DHCPMODEL):
     pass
 
 class DHCPPACK(DHCPMODEL): 
-        def __init__(self):
-            self.OP = bytes([0x02])
-            self.HTYPE = bytes([0x01])
-            self.HLEN = bytes([0x06])
-            self.HOPS = bytes([0x00])
-            self.XID = bytes([0x39, 0x03, 0xF3, 0x26])
-            self.SECS = bytes([0x00, 0x00])
-            self.FLAGS = bytes([0x00, 0x00])
-            self.CIADDR = bytes([0x00, 0x00, 0x00, 0x00])
-            self.YIADDR = bytes([0xC0, 0xA8, 0x01, 0x65]) 
-            self.SIADDR = bytes([0xC0, 0xA8, 0x01, 0x01]) 
-            self.GIADDR = bytes([0x00, 0x00, 0x00, 0x00])
-            self.CHADDR1 = bytes([0xBC, 0x10, 0x7B, 0x69]) 
-            self.CHADDR2 = bytes([0x1B, 0xC2, 0x00, 0x00])
-            self.CHADDR3 = bytes([0x00, 0x00, 0x00, 0x00]) 
-            self.CHADDR4 = bytes([0x00, 0x00, 0x00, 0x00]) 
-            self.CHADDR5 = bytes(192)
+        def __init__(self, dhcp_offer):
+            self.__dict__.update(dhcp_offer.__dict__) 
             self.Magiccookie = bytes([0x63, 0x82, 0x53, 0x63])
             self.DHCPOptions1 = bytes([53 , 1 , 5]) # DHCP Offer
             self.DHCPOptions2 = bytes([1 , 4 , 0xFF, 0xFF, 0xFF, 0x00]) 

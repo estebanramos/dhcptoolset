@@ -7,7 +7,10 @@ serverPort = 67
 
 class DHCP_server(object):
 
-    def server_broadcast(self):
+    def __init__(self, args):
+        self.DHCPPACKET = DHCPDISCOVER()
+
+    def server_broadcast(self, args):
         print("DHCP server is starting...\n")
         
         s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -23,27 +26,27 @@ class DHCP_server(object):
                 dest = ('255.255.255.255', address[1])
                 discovery = DHCPDISCOVER()
                 discovery.from_raw_data(data)
-                print("#"*20)
-                DHCPMODEL.print_raw_data(data)
-                print("#"*20+'\n')
-                offer = DHCPOFFER()
+                DHCPMODEL.print_raw_data(discovery.dhcp_data)
+                print("#"*25)
+                offer = DHCPOFFER(args)
                 offer.set_xid(discovery.XID)
                 offer.set_chaddr(discovery.CHADDR1, discovery.CHADDR2)
                 print("Send DHCP offer.")
                 print("#"*20)
                 DHCPMODEL.print_raw_data(offer.dhcp_data)
-                print("#"*20+'\n')
+                print("#"*25)
                 s.sendto(offer.dhcp_data, dest)
                 while 1:
                     try:
                         print("Wait DHCP request.\n")
                         data, address = s.recvfrom(MAX_BYTES)
                         DHCPMODEL.print_raw_data(data)
+                        print("#"*25)
                         request_data = DHCPREQUEST()
                         request_data.from_raw_data(data)
                         print("Receive DHCP request.\n")
                         print("Send DHCP pack.\n")
-                        data = DHCPPACK()
+                        data = DHCPPACK(offer)
                         data.set_xid(request_data.XID)
                         data.set_chaddr(request_data.CHADDR1, request_data.CHADDR2)
                         DHCPMODEL.print_raw_data(data.dhcp_data)
