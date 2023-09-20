@@ -9,19 +9,22 @@ class DHCP_server(object):
 
     def __init__(self, args):
         self.DHCPPACKET = DHCPDISCOVER()
+        self.serverPort = 67
 
-    def server_broadcast(self, args):
+
+    def start_server(self):
         print("DHCP server is starting...\n")
         
-        s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR,1)
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST,1)
-        s.bind(('0.0.0.0', serverPort))
+        self.s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        self.s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR,1)
+        self.s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST,1)
+        self.s.bind(('0.0.0.0', self.serverPort))
 
+    def server_broadcast(self, args):
         while 1:
             try:
                 print("Wait DHCP discovery.\n")
-                data, address = s.recvfrom(MAX_BYTES)
+                data, address = self.s.recvfrom(MAX_BYTES)
                 print("Receive DHCP discovery.")
                 dest = ('255.255.255.255', address[1])
                 discovery = DHCPDISCOVER()
@@ -35,11 +38,11 @@ class DHCP_server(object):
                 print("#"*20)
                 DHCPMODEL.print_raw_data(offer.dhcp_data)
                 print("#"*25)
-                s.sendto(offer.dhcp_data, dest)
+                self.s.sendto(offer.dhcp_data, dest)
                 while 1:
                     try:
                         print("Wait DHCP request.\n")
-                        data, address = s.recvfrom(MAX_BYTES)
+                        data, address = self.s.recvfrom(MAX_BYTES)
                         DHCPMODEL.print_raw_data(data)
                         print("#"*25)
                         request_data = DHCPREQUEST()
@@ -50,7 +53,7 @@ class DHCP_server(object):
                         data.set_xid(request_data.XID)
                         data.set_chaddr(request_data.CHADDR1, request_data.CHADDR2)
                         DHCPMODEL.print_raw_data(data.dhcp_data)
-                        s.sendto(data.dhcp_data, dest)
+                        self.s.sendto(data.dhcp_data, dest)
                         break
                     except:
                         raise
