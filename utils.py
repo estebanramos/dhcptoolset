@@ -35,13 +35,16 @@ def get_main_network_info():
             'Interface': default_interface,
             'Network Address': network_address,
             'Netmask': netmask,
-            'Gateway': ni.gateways()['default'][0]
+            'Gateway': get_default_gateway(default_interface)
         }
     else:
         return None  # No IPv4 configuration found for the default interface
     
 def valid_interface(iface):
     return iface in ni.interfaces()
+
+def interfaces():
+    return ni.interfaces()
 
 def valid_ip(ip):
     try:
@@ -61,4 +64,3 @@ def get_default_gateway(interface):
     for gw in gateways:
         if gw[1] == interface:
             return gw[0]
-    
