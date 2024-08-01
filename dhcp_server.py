@@ -14,11 +14,15 @@ class DHCP_server(object):
 
     def start_server(self):
         print("DHCP server is starting...\n")
-        
-        self.s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        self.s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR,1)
-        self.s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST,1)
-        self.s.bind(('0.0.0.0', self.serverPort))
+        try:
+            self.s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            self.s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR,1)
+            self.s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST,1)
+            self.s.bind(('0.0.0.0', self.serverPort))
+        except OSError as e:
+            if 'Address already in use' in e:
+                print(f"Server port {self.serverPort} already in use")            
+
 
     def server_broadcast(self, args):
         while 1:
@@ -32,31 +36,30 @@ class DHCP_server(object):
                 DHCPMODEL.print_raw_data(discovery.dhcp_data)
                 print("#"*25)
                 offer = DHCPOFFER(args)
-                offer.set_xid(discovery.XID)
+                offer.set_xid(discovery.XID)                
                 offer.set_chaddr(discovery.CHADDR1, discovery.CHADDR2)
                 print("Send DHCP offer.")
                 print("#"*20)
                 DHCPMODEL.print_raw_data(offer.dhcp_data)
                 print("#"*25)
                 self.s.sendto(offer.dhcp_data, dest)
-                while 1:
-                    try:
-                        print("Wait DHCP request.\n")
-                        data, address = self.s.recvfrom(MAX_BYTES)
-                        DHCPMODEL.print_raw_data(data)
-                        print("#"*25)
-                        request_data = DHCPREQUEST()
-                        request_data.from_raw_data(data)
-                        print("Receive DHCP request.\n")
-                        print("Send DHCP pack.\n")
-                        data = DHCPPACK(offer)
-                        data.set_xid(request_data.XID)
-                        data.set_chaddr(request_data.CHADDR1, request_data.CHADDR2)
-                        DHCPMODEL.print_raw_data(data.dhcp_data)
-                        self.s.sendto(data.dhcp_data, dest)
-                        break
-                    except:
-                        raise
+                try:
+                    print("Wait DHCP request.\n")
+                    data, address = self.s.recvfrom(MAX_BYTES)
+                    DHCPMODEL.print_raw_data(data)
+                    print("#"*25)
+                    request_data = DHCPREQUEST()
+                    request_data.from_raw_data(data)
+                    print("Receive DHCP request.\n")
+                    print("Send DHCP pack.\n")
+                    data = DHCPPACK(offer)
+                    data.set_xid(request_data.XID)
+                    data.set_chaddr(request_data.CHADDR1, request_data.CHADDR2)
+                    DHCPMODEL.print_raw_data(data.dhcp_data)
+                    self.s.sendto(data.dhcp_data, dest)
+                    break
+                except:
+                    raise
             except:
                 raise
             print("[#]"*60+'\n')

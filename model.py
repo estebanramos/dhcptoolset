@@ -25,12 +25,12 @@ class DHCPMODEL:
 
 
     def from_raw_data(self,dhcp_data):
-            self.OP = bytes(dhcp_data[0])
-            self.HTYPE = bytes(dhcp_data[1])
+            self.OP = bytes([dhcp_data[0]])
+            self.HTYPE = bytes([dhcp_data[1]])
         # Parse Hardware Address Length
-            self.HLEN = bytes(dhcp_data[2])
+            self.HLEN = bytes([dhcp_data[2]])
          # Parse Hops
-            self.HOPS = bytes(dhcp_data[3])
+            self.HOPS = bytes([dhcp_data[3]])
             # Parse Transaction ID
             self.XID = dhcp_data[4:8]
             # Parse Seconds Elapsed
@@ -112,7 +112,6 @@ class DHCPDISCOVER(DHCPMODEL):
 
 class DHCPOFFER(DHCPMODEL):
         def __init__(self, args):
-            print(args)
             DHCP_SERVER = bytes(int(octet) for octet in args.server.split('.'))
             ROUTER = bytes(int(octet) for octet in args.router.split('.'))
             OFFER = bytes(int(octet) for octet in args.offer.split('.'))

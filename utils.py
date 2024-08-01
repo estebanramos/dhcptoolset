@@ -1,6 +1,5 @@
-import socket
 import netifaces as ni
-import ipaddress
+import socket, ipaddress, random
 
 def decode_hexstring_offer_options(options_data):
     dhcp_offer = options_data[0:3]
@@ -25,17 +24,21 @@ def get_main_network_info():
     # Get the network configuration for the default interface
     interface_info = ni.ifaddresses(default_interface)
 
+    
     # Extract the network address and netmask from the interface configuration
     if ni.AF_INET in interface_info:
         interface_ipv4_info = interface_info[ni.AF_INET][0]
-        network_address = interface_ipv4_info['addr']
+        client_address = interface_ipv4_info['addr']
         netmask = interface_ipv4_info['netmask']
-
+        network = ipaddress.IPv4Network(f"{client_address}/{netmask}", strict=False)
+        network_address = f"{network.network_address}/{network.prefixlen}"
+        print("network: ", network_address)
         return {
             'Interface': default_interface,
-            'Network Address': network_address,
+            'Client Address': client_address,
             'Netmask': netmask,
-            'Gateway': get_default_gateway(default_interface)
+            'Gateway': get_default_gateway(default_interface),
+            'Network': network_address
         }
     else:
         return None  # No IPv4 configuration found for the default interface
@@ -64,3 +67,18 @@ def get_default_gateway(interface):
     for gw in gateways:
         if gw[1] == interface:
             return gw[0]
+        
+def get_network_address(ifname):
+    addresses = ni.ifaddresses(ifname)
+    ip_info = addresses[ni.AF_INET][0]
+    ip_addr = ip_info['addr']
+    netmask = ip_info['netmask']
+
+    network = ipaddress.IPv4Network(f'{ip_addr}/{netmask}', strict=False)
+    return network
+
+def generate_random_ip(iface):
+    network = get_network_address(iface)
+    network_hosts = list(network.hosts())
+    random_ip = random.choice(network_hosts)
+    return str(random_ip)

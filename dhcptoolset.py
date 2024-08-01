@@ -14,7 +14,6 @@ def is_valid_ip(value):
 
 def rogue_dhcp_action(args):
     network_info = utils.get_main_network_info()
-    print(network_info)
     if args.server is None:
         args.server = utils.get_default_gateway(args.iface)
     print(f"Server: {args.server}")
@@ -24,7 +23,7 @@ def rogue_dhcp_action(args):
     print(f"Router: {args.router}")
 
     if args.offer is None:
-        args.offer = network_info['Network Address']
+        args.offer = utils.generate_random_ip(network_info['Interface'])
     print(f"Offer: {args.offer}")
     rogue_server = DHCP_server(args)
     rogue_server.start_server()
@@ -39,7 +38,7 @@ dhcp_server_parser.set_defaults(func=rogue_dhcp_action)
 dhcp_server_parser.add_argument('-i', '--iface', help = 'Network interface to listen', required = True, type=is_valid_interface)
 dhcp_server_parser.add_argument('-s', '--server', help = 'DHCP Server', required = False, type=is_valid_ip)
 dhcp_server_parser.add_argument('-r', '--router', help = 'Default Gateway IP', required = False, type=is_valid_ip)
-dhcp_server_parser.add_argument('-o', '--offer', help = 'IP to offer to Clients. Defaults to client ip', type=is_valid_ip)
+dhcp_server_parser.add_argument('-o', '--offer', help = 'IP to offer to Clients. Defaults to random ip', type=is_valid_ip)
 
 
 dhcp_client_parser = subparsers.add_parser('fake-client', help='Send fake DHCP requests to the network')
