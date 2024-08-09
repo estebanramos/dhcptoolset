@@ -1,5 +1,5 @@
 import netifaces as ni
-import socket, ipaddress, random
+import socket, ipaddress, random, requests
 
 def decode_hexstring_offer_options(options_data):
     dhcp_offer = options_data[0:3]
@@ -32,7 +32,6 @@ def get_main_network_info():
         netmask = interface_ipv4_info['netmask']
         network = ipaddress.IPv4Network(f"{client_address}/{netmask}", strict=False)
         network_address = f"{network.network_address}/{network.prefixlen}"
-        print("network: ", network_address)
         return {
             'Interface': default_interface,
             'Client Address': client_address,
@@ -82,3 +81,14 @@ def generate_random_ip(iface):
     network_hosts = list(network.hosts())
     random_ip = random.choice(network_hosts)
     return str(random_ip)
+
+def get_vendor(mac_address):
+    url = f"https://api.macvendors.com/{mac_address}"
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            return response.text
+        else:
+            return "Couldn't find MAC Vendor"
+    except Exception as e:
+        return f"Error: {str(e)}"

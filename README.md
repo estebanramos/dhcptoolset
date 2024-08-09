@@ -11,8 +11,15 @@ Keep in mind that you must use other tools to complement MITM attacks with DHCP.
 - configure ip forwarding/traffic inspection when impersonating a gateway
 - faulty behaviour due to dhcp's protocol's nature
 
-## Usage
+## To Do
+- DHCPv6 Support
+- Multi-threading
 
+## Installation
+```
+pip3 install -r requirements.txt
+```
+## Usage
 ```
 usage: dhcptoolset.py [-h] {rogue-dhcp,fake-client} ...
 
@@ -28,9 +35,7 @@ options:
   -h, --help            show this help message and exit
 
 ```
-
 ## Rogue DHCP
-
 ```
 usage: dhcptoolset.py rogue-dhcp [-h] -i IFACE [-s SERVER] [-r ROUTER] [-o OFFER]
 
@@ -43,7 +48,10 @@ options:
   -r ROUTER, --router ROUTER
                         Default Gateway IP
   -o OFFER, --offer OFFER
-                        IP to offer to Clients. Defaults to client ip
+                        IP to offer to Clients. Leave blank to random ip
 ```
+## References
 
+- https://en.wikipedia.org/wiki/Dynamic_Host_Configuration_Protocol
+- https://learn.microsoft.com/en-us/windows-server/troubleshoot/dynamic-host-configuration-protocol-basics
 

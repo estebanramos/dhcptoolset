@@ -1,10 +1,13 @@
 import utils
+from rich.console import Console
+from rich.table import Table
+from rich import box
 
 class DHCPMODEL:
+             
     def __init__(self, *args):
         pass
 
-    
     def __getitem__(self, index):
         out = self._data[index]
         return (out)
@@ -105,6 +108,59 @@ class DHCPMODEL:
         print(f"Client Hardware Address (MAC Address): {'-'.join(f'{b:02X}' for b in client_hw_addr)}")
         print(f"Options (partial): {options}")
     
+    def print_table_data(dhcp_data):
+        # Parse Message Type (Op Code)
+        message_type = dhcp_data[0]
+        # Parse Hardware Type
+        hardware_type = dhcp_data[1]
+        # Parse Hardware Address Length
+        hardware_addr_len = dhcp_data[2]
+         # Parse Hops
+        hops = dhcp_data[3]
+            # Parse Transaction ID
+        transaction_id = dhcp_data[4:8]
+            # Parse Seconds Elapsed
+        seconds_elapsed = dhcp_data[8:10]
+            # Parse Flags
+        flags = dhcp_data[10:12]
+            # Parse Client IP Address
+        client_ip = dhcp_data[12:16]
+            # Parse Your IP Address (Server IP)
+        server_ip = dhcp_data[16:20]
+            # Parse Next Server IP Address (Gateway IP)
+        gateway_ip = dhcp_data[20:24]
+            # Parse Client Hardware Address (MAC Address)
+        client_hw_addr = dhcp_data[28:34]
+        # Parse Options (partial parsing)
+        options = dhcp_data[240:]
+        method = int(options[0:3].hex()[5:])
+        method_name = DHCPMessage.dhcp_message_types.get(method)
+
+        console = Console()
+        table = Table(title=f"DHCP {method_name} Packet", box=box.ROUNDED, show_header=True)
+        table.add_column("Field", justify="left", style="cyan", no_wrap=True)
+        table.add_column("Value", justify="center", style="bold magenta")        
+        fields = [
+            ("Op Code", str(message_type)),
+            ("Hardware Type", str(hardware_type)),
+            ("Hardware Address Length", str(hardware_addr_len)),
+            ("Hops", str(hops)),
+            ("Transaction ID", ''.join(f'{b:02X}' for b in transaction_id)),
+            ("Seconds", str(int.from_bytes(seconds_elapsed, byteorder='big'))),
+            ("Flags", ''.join(f'{b:02X}' for b in flags)),
+            ("Client IP Address", '.'.join(str(b) for b in client_ip)),
+            ("Local IP Address", '.'.join(str(b) for b in server_ip)),
+            ("Server IP Address", '.'.join(str(b) for b in gateway_ip)),
+            ("Client Hardware Address (16-bytes)", '-'.join(f'{b:02X}' for b in client_hw_addr)),
+            #("Client Hardware Address Vendor", utils.get_vendor('-'.join(f'{b:02X}' for b in client_hw_addr))),
+            ("Options (64-bytes)", "0 - 255")
+        ]
+
+        for field, range_ in fields:
+            table.add_row(field, range_)
+
+        console.print(table)
+
 class DHCPDISCOVER(DHCPMODEL):
         def __init__(self):
             pass
@@ -155,3 +211,15 @@ class DHCPPACK(DHCPMODEL):
             self.DHCPOptions5 = bytes([54 , 4 , 0xC0, 0xA8, 0x01, 0x01])
             self.DHCPOptions6 = bytes([6 , 4 , 0x08, 0x08, 0x08, 0x08])
             self.dhcp_data = self.OP + self.HTYPE + self.HLEN + self.HOPS + self.XID + self.SECS + self.FLAGS + self.CIADDR + self.YIADDR + self.SIADDR + self.GIADDR + self.CHADDR1 + self.CHADDR2 + self.CHADDR3 + self.CHADDR4 + self.CHADDR5 + self.Magiccookie + self.DHCPOptions1 + self.DHCPOptions2 + self.DHCPOptions3 + self.DHCPOptions4 + self.DHCPOptions5
+
+class DHCPMessage:
+    dhcp_message_types = {
+        1: "Discover",
+        2: "Offer",
+        3: "Request",
+        4: "Decline",
+        5: "Pack",
+        6: "NAK",
+        7: "Release",
+        8: "Inform"
+    }
