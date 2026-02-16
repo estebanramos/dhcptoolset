@@ -43,16 +43,37 @@ def get_main_network_info():
         return None  # No IPv4 configuration found for the default interface
     
 def valid_interface(iface):
+    """Check if a network interface exists on the system.
+    
+    Args:
+        iface: Interface name to check
+        
+    Returns:
+        bool: True if interface exists, False otherwise
+    """
     return iface in ni.interfaces()
 
 def interfaces():
+    """Get list of all available network interfaces.
+    
+    Returns:
+        list: List of interface names
+    """
     return ni.interfaces()
 
 def valid_ip(ip):
+    """Validate if a string is a valid IPv4 address.
+    
+    Args:
+        ip: IP address string to validate
+        
+    Returns:
+        bool: True if valid IPv4 address, False otherwise
+    """
     try:
         socket.inet_aton(ip)
         return True
-    except:
+    except (socket.error, OSError):
         return False
 
 def ip_network(ip, iface):

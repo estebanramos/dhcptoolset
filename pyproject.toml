@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dhcptoolset"
+version = "1.0.0"
+description = "A Python toolkit for DHCP protocol manipulation and security testing"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "DHCP Toolset Contributors"}
+]
+keywords = ["dhcp", "network", "security", "pentesting"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Topic :: Security",
+    "Topic :: System :: Networking",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "colorama>=0.4.4",
+    "netifaces>=0.11.0",
+    "requests>=2.32.3",
+    "rich>=13.7.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/estebanramos/dhcptoolset"
+Documentation = "https://github.com/estebanramos/dhcptoolset#readme"
+Repository = "https://github.com/estebanramos/dhcptoolset"
+Issues = "https://github.com/estebanramos/dhcptoolset/issues"
+
+[project.scripts]
+dhcptoolset = "dhcptoolset:main"
+
+[tool.setuptools]
+py-modules = ["dhcptoolset", "dhcp_server", "model", "utils"]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

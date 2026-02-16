@@ -3,6 +3,21 @@ from rich.console import Console
 from rich.table import Table
 from rich import box
 
+
+class DHCPMessage:
+    """DHCP message type constants."""
+    dhcp_message_types = {
+        1: "Discover",
+        2: "Offer",
+        3: "Request",
+        4: "Decline",
+        5: "Pack",
+        6: "NAK",
+        7: "Release",
+        8: "Inform"
+    }
+
+
 class DHCPMODEL:
              
     def __init__(self, *args):
@@ -133,8 +148,8 @@ class DHCPMODEL:
         client_hw_addr = dhcp_data[28:34]
         # Parse Options (partial parsing)
         options = dhcp_data[240:]
-        method = int(options[0:3].hex()[5:])
-        method_name = DHCPMessage.dhcp_message_types.get(method)
+        method = int(options[0:3].hex()[5:]) if len(options) >= 3 else 0
+        method_name = DHCPMessage.dhcp_message_types.get(method, "Unknown")
 
         console = Console()
         table = Table(title=f"DHCP {method_name} Packet", box=box.ROUNDED, show_header=True)
@@ -188,13 +203,18 @@ class DHCPOFFER(DHCPMODEL):
             self.CHADDR4 = bytes([0x00, 0x00, 0x00, 0x00]) 
             self.CHADDR5 = bytes(192)
             self.Magiccookie = bytes([0x63, 0x82, 0x53, 0x63])
-            self.DHCPOptions1 = bytes([53 , 1 , 2]) # DHCP Offer
-            self.DHCPOptions2 = bytes([1 , 4 , 0xFF, 0xFF, 0xFF, 0x00]) 
-            self.DHCPOptions3 = bytes([3 , 4 , 0xC0, 0xA8, 0x01, 0x01]) 
-            self.DHCPOptions4 = bytes([51 , 4 , 0x00, 0x01, 0x51, 0x80]) 
-            self.DHCPOptions5 = bytes([54 , 4 , 0xC0, 0xA8, 0x01, 0x01])
-            self.DHCPOptions6 = bytes([6 , 4 , 0x08, 0x08, 0x08, 0x08]) 
-            self.dhcp_data = self.OP + self.HTYPE + self.HLEN + self.HOPS + self.XID + self.SECS + self.FLAGS + self.CIADDR + self.YIADDR + self.SIADDR + self.GIADDR + self.CHADDR1 + self.CHADDR2 + self.CHADDR3 + self.CHADDR4 + self.CHADDR5 + self.Magiccookie + self.DHCPOptions1 + self.DHCPOptions2 + self.DHCPOptions3 + self.DHCPOptions4 + self.DHCPOptions5
+            self.DHCPOptions1 = bytes([53, 1, 2])  # DHCP Offer
+            # Subnet mask (option 1) - default /24
+            self.DHCPOptions2 = bytes([1, 4, 0xFF, 0xFF, 0xFF, 0x00])
+            # Router/Gateway (option 3)
+            self.DHCPOptions3 = bytes([3, 4]) + ROUTER
+            # Lease time (option 51) - 86400 seconds = 1 day
+            self.DHCPOptions4 = bytes([51, 4, 0x00, 0x01, 0x51, 0x80])
+            # DHCP Server Identifier (option 54)
+            self.DHCPOptions5 = bytes([54, 4]) + DHCP_SERVER
+            # DNS Server (option 6) - Using Google DNS as default
+            self.DHCPOptions6 = bytes([6, 4, 0x08, 0x08, 0x08, 0x08])
+            self.dhcp_data = self.OP + self.HTYPE + self.HLEN + self.HOPS + self.XID + self.SECS + self.FLAGS + self.CIADDR + self.YIADDR + self.SIADDR + self.GIADDR + self.CHADDR1 + self.CHADDR2 + self.CHADDR3 + self.CHADDR4 + self.CHADDR5 + self.Magiccookie + self.DHCPOptions1 + self.DHCPOptions2 + self.DHCPOptions3 + self.DHCPOptions4 + self.DHCPOptions5 + self.DHCPOptions6
 
 
 class DHCPREQUEST(DHCPMODEL):
@@ -202,24 +222,10 @@ class DHCPREQUEST(DHCPMODEL):
 
 class DHCPPACK(DHCPMODEL): 
         def __init__(self, dhcp_offer):
+            """Create DHCP ACK packet from DHCP OFFER."""
             self.__dict__.update(dhcp_offer.__dict__) 
             self.Magiccookie = bytes([0x63, 0x82, 0x53, 0x63])
-            self.DHCPOptions1 = bytes([53 , 1 , 5]) # DHCP Offer
-            self.DHCPOptions2 = bytes([1 , 4 , 0xFF, 0xFF, 0xFF, 0x00]) 
-            self.DHCPOptions3 = bytes([3 , 4 , 0xC0, 0xA8, 0x01, 0x01]) 
-            self.DHCPOptions4 = bytes([51 , 4 , 0x00, 0x01, 0x51, 0x80]) 
-            self.DHCPOptions5 = bytes([54 , 4 , 0xC0, 0xA8, 0x01, 0x01])
-            self.DHCPOptions6 = bytes([6 , 4 , 0x08, 0x08, 0x08, 0x08])
-            self.dhcp_data = self.OP + self.HTYPE + self.HLEN + self.HOPS + self.XID + self.SECS + self.FLAGS + self.CIADDR + self.YIADDR + self.SIADDR + self.GIADDR + self.CHADDR1 + self.CHADDR2 + self.CHADDR3 + self.CHADDR4 + self.CHADDR5 + self.Magiccookie + self.DHCPOptions1 + self.DHCPOptions2 + self.DHCPOptions3 + self.DHCPOptions4 + self.DHCPOptions5
-
-class DHCPMessage:
-    dhcp_message_types = {
-        1: "Discover",
-        2: "Offer",
-        3: "Request",
-        4: "Decline",
-        5: "Pack",
-        6: "NAK",
-        7: "Release",
-        8: "Inform"
-    }
+            self.DHCPOptions1 = bytes([53, 1, 5])  # DHCP ACK
+            # Keep the same options from the offer
+            # DHCPOptions2-6 are already set from dhcp_offer
+            self.dhcp_data = self.OP + self.HTYPE + self.HLEN + self.HOPS + self.XID + self.SECS + self.FLAGS + self.CIADDR + self.YIADDR + self.SIADDR + self.GIADDR + self.CHADDR1 + self.CHADDR2 + self.CHADDR3 + self.CHADDR4 + self.CHADDR5 + self.Magiccookie + self.DHCPOptions1 + self.DHCPOptions2 + self.DHCPOptions3 + self.DHCPOptions4 + self.DHCPOptions5 + self.DHCPOptions6
