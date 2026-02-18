@@ -1,5 +1,9 @@
 import argparse, utils, sys
 import os
+import socket
+import struct
+import random
+import time
 from dhcp_server import DHCP_server, PortInUseError
 from rich.console import Console
 from rich.table import Table
@@ -49,6 +53,18 @@ def is_valid_ip(value):
     else:
         raise argparse.ArgumentTypeError(f"'{value}' is not a valid IPv4 address")
 
+
+def parse_dns_list(value: str):
+    """Parse a comma-separated list of IPv4 addresses for DNS."""
+    dns_raw = [v.strip() for v in value.split(",")]
+    dns_list = [v for v in dns_raw if v]
+    if not dns_list:
+        raise argparse.ArgumentTypeError("'--dns' must contain at least one IP")
+    invalid = [ip for ip in dns_list if not utils.valid_ip(ip)]
+    if invalid:
+        raise argparse.ArgumentTypeError(f"Invalid DNS IP(s): {', '.join(invalid)}")
+    return dns_list
+
 def rogue_dhcp_action(args):
     """Action handler for rogue-dhcp command.
     
@@ -65,22 +81,40 @@ def rogue_dhcp_action(args):
         print(Fore.CYAN + "[i] - " + Style.BRIGHT + "Or: sudo dhcptoolset rogue-dhcp -i " + args.iface + Style.RESET_ALL)
         sys.exit(1)
     
-    network_info = utils.get_main_network_info()
+    network_info = utils.get_interface_ipv4_info(args.iface)
+    if network_info is None:
+        print(Fore.RED + "[X] - " + Style.BRIGHT + f"No IPv4 configuration found for interface {args.iface}" + Style.RESET_ALL)
+        sys.exit(1)
+
+    # Critical correctness:
+    # - DHCP Server Identifier (option 54) should be the DHCP server's IP (OUR interface IP).
+    # - Router (option 3) is the default gateway we want clients to use.
     if args.server is None:
-        args.server = utils.get_default_gateway(args.iface)
+        args.server = network_info["Client Address"]
     if args.router is None:
-        args.router = utils.get_default_gateway(args.iface)
+        args.router = network_info["Gateway"]
+    args.netmask = network_info["Netmask"]
+
+    # DNS servers
+    if getattr(args, "dns", None) is None:
+        args.dns_list = [args.router] if args.router else []
+    else:
+        args.dns_list = parse_dns_list(args.dns)
+
     if args.offer is None:
-        args.offer = utils.generate_random_ip(network_info['Interface'])
+        args.offer = utils.generate_random_ip(args.iface)
     console = Console()
     table = Table(title=f"DHCP Server Info", box=box.ROUNDED, show_header=True)
     table.add_column("Field", justify="left", style="cyan", no_wrap=True)
     table.add_column("Value", justify="center", style="bold green")
     fields = [
-            ("Network", args.server),
-            ("Default Gateway", args.router),
-            ("Client IP", args.offer)
-        ]
+        ("Interface", args.iface),
+        ("Network", network_info["Network"]),
+        ("DHCP Server (this host)", args.server),
+        ("Default Gateway", args.router),
+        ("Client IP Offer", args.offer),
+        ("DNS Servers", ", ".join(args.dns_list) if args.dns_list else "N/A"),
+    ]
     for field, range_ in fields:
         table.add_row(field, range_)
     console.print(table)
@@ -100,17 +134,168 @@ dhcp_server_parser.add_argument('-i', '--iface', help = 'Network interface to li
 dhcp_server_parser.add_argument('-s', '--server', help = 'DHCP Server', required = False, type=is_valid_ip)
 dhcp_server_parser.add_argument('-r', '--router', help = 'Default Gateway IP', required = False, type=is_valid_ip)
 dhcp_server_parser.add_argument('-o', '--offer', help = 'IP to offer to Clients. Leave blank to random ip', type=is_valid_ip)
+dhcp_server_parser.add_argument('--dns', help='Comma-separated DNS servers to offer to clients (default: router IP)', required=False)
+
+def build_discover_packet(iface: str):
+    """Build a minimal DHCP DISCOVER packet using the MAC of the given interface."""
+    mac = utils.get_mac_bytes(iface)
+    xid = random.getrandbits(32).to_bytes(4, byteorder="big")
+
+    op = b"\x01"        # BOOTREQUEST
+    htype = b"\x01"     # Ethernet
+    hlen = b"\x06"      # MAC length
+    hops = b"\x00"
+    secs = b"\x00\x00"
+    flags = b"\x00\x00"
+    ciaddr = b"\x00\x00\x00\x00"
+    yiaddr = b"\x00\x00\x00\x00"
+    siaddr = b"\x00\x00\x00\x00"
+    giaddr = b"\x00\x00\x00\x00"
+
+    chaddr = mac + b"\x00" * (16 - len(mac))  # 16 bytes
+    sname = b"\x00" * 64
+    file_field = b"\x00" * 128
+    magic_cookie = b"\x63\x82\x53\x63"
+
+    # Options: DHCP Message Type (53=Discover), Parameter Request List (55), END (255)
+    options = b""
+    options += b"\x35\x01\x01"  # Option 53, len 1, DHCPDISCOVER
+    options += b"\x37\x04\x01\x03\x06\x2a"  # Option 55: request 1,3,6,42 (just as example)
+    options += b"\xff"  # END
+
+    dhcp_packet = (
+        op
+        + htype
+        + hlen
+        + hops
+        + xid
+        + secs
+        + flags
+        + ciaddr
+        + yiaddr
+        + siaddr
+        + giaddr
+        + chaddr
+        + sname
+        + file_field
+        + magic_cookie
+        + options
+    )
+    return dhcp_packet, xid, mac
+
 
 def fake_client_action(args):
-    """Action handler for fake-client command.
-    
-    Placeholder for future implementation of fake DHCP client functionality.
-    
-    Args:
-        args: Parsed command-line arguments containing interface information
-    """
-    print(Fore.YELLOW + "[!] - " + Style.BRIGHT + "Fake-client functionality is not yet implemented." + Style.RESET_ALL)
-    print(Fore.CYAN + "[i] - " + Style.BRIGHT + "This feature will allow sending fake DHCP requests to the network." + Style.RESET_ALL)
+    """Minimal fake DHCP client to discover active DHCP servers on the network."""
+
+    if not check_root_privileges():
+        print(
+            Fore.RED
+            + "[X] - "
+            + Style.BRIGHT
+            + "Root privileges required to send/receive DHCP packets (ports 67/68)."
+            + Style.RESET_ALL
+        )
+        sys.exit(1)
+
+    discover, xid, mac = build_discover_packet(args.iface)
+    mac_str = "-".join(f"{b:02X}" for b in mac)
+
+    print(
+        Fore.CYAN
+        + "[i] - "
+        + Style.BRIGHT
+        + f"Sending DHCP DISCOVER from {mac_str} on interface {args.iface}..."
+        + Style.RESET_ALL
+    )
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        # Muchos sistemas ya tienen un cliente DHCP escuchando en 68.
+        # En lugar de bindear a 68, dejamos que el SO elija un puerto efímero.
+        s.bind(("", 0))
+    except PermissionError:
+        print(
+            Fore.RED
+            + "[X] - "
+            + Style.BRIGHT
+            + "Could not create UDP socket for DHCP. Please run with sudo."
+            + Style.RESET_ALL
+        )
+        sys.exit(1)
+
+    local_port = s.getsockname()[1]
+
+    # Enviamos DISCOVER desde nuestro puerto efímero hacia el puerto 67 del/los servidor(es)
+    s.sendto(discover, ("255.255.255.255", 67))
+
+    s.settimeout(3.0)
+    seen_servers = set()
+
+    start = time.time()
+    while time.time() - start < 3.0:
+        try:
+            data, addr = s.recvfrom(1024)
+        except socket.timeout:
+            break
+
+        src_ip, src_port = addr
+        # Sólo nos interesan respuestas de servidores DHCP (src port 67)
+        if src_port != 67:
+            continue
+
+        # Check XID matches
+        if data[4:8] != xid:
+            continue
+
+        yiaddr = ".".join(str(b) for b in data[16:20])
+
+        # Parse options to get message type and Server-ID
+        options = data[240:]
+        msg_type = None
+        server_id = None
+        i = 0
+        while i < len(options):
+            code = options[i]
+            if code == 255:
+                break
+            if i + 1 >= len(options):
+                break
+            length = options[i + 1]
+            if i + 2 + length > len(options):
+                break
+            value = options[i + 2 : i + 2 + length]
+            if code == 53 and length >= 1:
+                msg_type = value[0]
+            if code == 54 and length == 4:
+                server_id = ".".join(str(b) for b in value)
+            i += 2 + length
+
+        if msg_type not in (2, 5):  # Offer or ACK
+            continue
+
+        key = server_id or src_ip
+        if key in seen_servers:
+            continue
+        seen_servers.add(key)
+
+        tipo = "OFFER" if msg_type == 2 else "ACK"
+        print(
+            Fore.GREEN
+            + "[✓] - "
+            + Style.BRIGHT
+            + f"Servidor DHCP detectado: {key} (src IP {src_ip}) → ofreció IP {yiaddr} ({tipo})"
+            + Style.RESET_ALL
+        )
+
+    if not seen_servers:
+        print(
+            Fore.YELLOW
+            + "[!] - "
+            + Style.BRIGHT
+            + "No se detectaron respuestas DHCP (OFFER/ACK) en la red."
+            + Style.RESET_ALL
+        )
 
 dhcp_client_parser = subparsers.add_parser('fake-client', help='Send fake DHCP requests to the network')
 dhcp_client_parser.set_defaults(func=fake_client_action)

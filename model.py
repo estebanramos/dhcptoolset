@@ -33,13 +33,15 @@ class DHCPMODEL:
 
     def set_xid(self, value):
          self.XID = value
-         self.dhcp_data = self.OP + self.HTYPE + self.HLEN + self.HOPS + self.XID + self.SECS + self.FLAGS + self.CIADDR + self.YIADDR + self.SIADDR + self.GIADDR + self.CHADDR1 + self.CHADDR2 + self.CHADDR3 + self.CHADDR4 + self.CHADDR5 + self.Magiccookie + self.DHCPOptions1 + self.DHCPOptions2 + self.DHCPOptions3 + self.DHCPOptions4 + self.DHCPOptions5 + self.DHCPOptions6
+         end = getattr(self, "DHCPOptionsEnd", b"")
+         self.dhcp_data = self.OP + self.HTYPE + self.HLEN + self.HOPS + self.XID + self.SECS + self.FLAGS + self.CIADDR + self.YIADDR + self.SIADDR + self.GIADDR + self.CHADDR1 + self.CHADDR2 + self.CHADDR3 + self.CHADDR4 + self.CHADDR5 + self.Magiccookie + self.DHCPOptions1 + self.DHCPOptions2 + self.DHCPOptions3 + self.DHCPOptions4 + self.DHCPOptions5 + self.DHCPOptions6 + end
 
 
     def set_chaddr(self, value, value2):
          self.CHADDR1 = value
          self.CHADDR2= value2
-         self.dhcp_data = self.OP + self.HTYPE + self.HLEN + self.HOPS + self.XID + self.SECS + self.FLAGS + self.CIADDR + self.YIADDR + self.SIADDR + self.GIADDR + self.CHADDR1 + self.CHADDR2 + self.CHADDR3 + self.CHADDR4 + self.CHADDR5 + self.Magiccookie + self.DHCPOptions1 + self.DHCPOptions2 + self.DHCPOptions3 + self.DHCPOptions4 + self.DHCPOptions5 + self.DHCPOptions6
+         end = getattr(self, "DHCPOptionsEnd", b"")
+         self.dhcp_data = self.OP + self.HTYPE + self.HLEN + self.HOPS + self.XID + self.SECS + self.FLAGS + self.CIADDR + self.YIADDR + self.SIADDR + self.GIADDR + self.CHADDR1 + self.CHADDR2 + self.CHADDR3 + self.CHADDR4 + self.CHADDR5 + self.Magiccookie + self.DHCPOptions1 + self.DHCPOptions2 + self.DHCPOptions3 + self.DHCPOptions4 + self.DHCPOptions5 + self.DHCPOptions6 + end
 
 
     def from_raw_data(self,dhcp_data):
@@ -123,7 +125,7 @@ class DHCPMODEL:
         print(f"Client Hardware Address (MAC Address): {'-'.join(f'{b:02X}' for b in client_hw_addr)}")
         print(f"Options (partial): {options}")
     
-    def print_table_data(dhcp_data):
+    def print_table_data(dhcp_data, direction: str = ""):
         # Parse Message Type (Op Code)
         message_type = dhcp_data[0]
         # Parse Hardware Type
@@ -146,13 +148,37 @@ class DHCPMODEL:
         gateway_ip = dhcp_data[20:24]
             # Parse Client Hardware Address (MAC Address)
         client_hw_addr = dhcp_data[28:34]
-        # Parse Options (partial parsing)
+        # Parse Options (TLV)
         options = dhcp_data[240:]
-        method = int(options[0:3].hex()[5:]) if len(options) >= 3 else 0
+
+        # Extract message type (option 53) + DNS (option 6)
+        method = 0
+        dns_servers = []
+        i = 0
+        while i < len(options):
+            code = options[i]
+            if code == 255:
+                break
+            if i + 1 >= len(options):
+                break
+            length = options[i + 1]
+            if i + 2 + length > len(options):
+                break
+            value = options[i + 2 : i + 2 + length]
+            if code == 53 and length >= 1:
+                method = value[0]
+            if code == 6 and length >= 4:
+                for j in range(0, length, 4):
+                    chunk = value[j : j + 4]
+                    if len(chunk) == 4:
+                        dns_servers.append(".".join(str(b) for b in chunk))
+            i += 2 + length
+
         method_name = DHCPMessage.dhcp_message_types.get(method, "Unknown")
 
         console = Console()
-        table = Table(title=f"DHCP {method_name} Packet", box=box.ROUNDED, show_header=True)
+        title_suffix = f" [{direction}]" if direction else ""
+        table = Table(title=f"DHCP {method_name} Packet{title_suffix}", box=box.ROUNDED, show_header=True)
         table.add_column("Field", justify="left", style="cyan", no_wrap=True)
         table.add_column("Value", justify="center", style="bold magenta")        
         fields = [
@@ -167,8 +193,8 @@ class DHCPMODEL:
             ("Local IP Address", '.'.join(str(b) for b in server_ip)),
             ("Server IP Address", '.'.join(str(b) for b in gateway_ip)),
             ("Client Hardware Address (16-bytes)", '-'.join(f'{b:02X}' for b in client_hw_addr)),
-            #("Client Hardware Address Vendor", utils.get_vendor('-'.join(f'{b:02X}' for b in client_hw_addr))),
-            ("Options (64-bytes)", "0 - 255")
+            ("Offered DNS", ", ".join(dns_servers) if dns_servers else "N/A"),
+            ("Options (64-bytes)", "0 - 255"),
         ]
 
         for field, range_ in fields:
@@ -186,6 +212,9 @@ class DHCPOFFER(DHCPMODEL):
             DHCP_SERVER = bytes(int(octet) for octet in args.server.split('.'))
             ROUTER = bytes(int(octet) for octet in args.router.split('.'))
             OFFER = bytes(int(octet) for octet in args.offer.split('.'))
+            NETMASK = bytes(int(octet) for octet in getattr(args, "netmask", "255.255.255.0").split('.'))
+            dns_list = getattr(args, "dns_list", None) or ([args.router] if args.router else [])
+            dns_bytes = b"".join(bytes(int(octet) for octet in ip.split(".")) for ip in dns_list)
             self.OP = bytes([0x02])
             self.HTYPE = bytes([0x01])
             self.HLEN = bytes([0x06])
@@ -196,7 +225,8 @@ class DHCPOFFER(DHCPMODEL):
             self.CIADDR = bytes([0x00, 0x00, 0x00, 0x00])
             self.YIADDR = OFFER
             self.SIADDR = DHCP_SERVER
-            self.GIADDR = ROUTER
+            # GIADDR must be 0.0.0.0 when we're not a relay
+            self.GIADDR = bytes([0x00, 0x00, 0x00, 0x00])
             self.CHADDR1 = bytes([0xBC, 0x10, 0x7B, 0x69]) 
             self.CHADDR2 = bytes([0x1B, 0xC2, 0x00, 0x00])
             self.CHADDR3 = bytes([0x00, 0x00, 0x00, 0x00]) 
@@ -204,17 +234,26 @@ class DHCPOFFER(DHCPMODEL):
             self.CHADDR5 = bytes(192)
             self.Magiccookie = bytes([0x63, 0x82, 0x53, 0x63])
             self.DHCPOptions1 = bytes([53, 1, 2])  # DHCP Offer
-            # Subnet mask (option 1) - default /24
-            self.DHCPOptions2 = bytes([1, 4, 0xFF, 0xFF, 0xFF, 0x00])
+            # Subnet mask (option 1)
+            self.DHCPOptions2 = bytes([1, 4]) + NETMASK
             # Router/Gateway (option 3)
             self.DHCPOptions3 = bytes([3, 4]) + ROUTER
             # Lease time (option 51) - 86400 seconds = 1 day
             self.DHCPOptions4 = bytes([51, 4, 0x00, 0x01, 0x51, 0x80])
             # DHCP Server Identifier (option 54)
             self.DHCPOptions5 = bytes([54, 4]) + DHCP_SERVER
-            # DNS Server (option 6) - Using Google DNS as default
-            self.DHCPOptions6 = bytes([6, 4, 0x08, 0x08, 0x08, 0x08])
-            self.dhcp_data = self.OP + self.HTYPE + self.HLEN + self.HOPS + self.XID + self.SECS + self.FLAGS + self.CIADDR + self.YIADDR + self.SIADDR + self.GIADDR + self.CHADDR1 + self.CHADDR2 + self.CHADDR3 + self.CHADDR4 + self.CHADDR5 + self.Magiccookie + self.DHCPOptions1 + self.DHCPOptions2 + self.DHCPOptions3 + self.DHCPOptions4 + self.DHCPOptions5 + self.DHCPOptions6
+            # DNS Server (option 6) - one or more IPs
+            self.DHCPOptions6 = bytes([6, len(dns_bytes)]) + dns_bytes if dns_bytes else bytes([6, 0])
+            # End option
+            self.DHCPOptionsEnd = bytes([255])
+            self.dhcp_data = (
+                self.OP + self.HTYPE + self.HLEN + self.HOPS + self.XID + self.SECS + self.FLAGS
+                + self.CIADDR + self.YIADDR + self.SIADDR + self.GIADDR
+                + self.CHADDR1 + self.CHADDR2 + self.CHADDR3 + self.CHADDR4 + self.CHADDR5
+                + self.Magiccookie
+                + self.DHCPOptions1 + self.DHCPOptions2 + self.DHCPOptions3 + self.DHCPOptions4 + self.DHCPOptions5 + self.DHCPOptions6
+                + self.DHCPOptionsEnd
+            )
 
 
 class DHCPREQUEST(DHCPMODEL):
@@ -228,4 +267,12 @@ class DHCPPACK(DHCPMODEL):
             self.DHCPOptions1 = bytes([53, 1, 5])  # DHCP ACK
             # Keep the same options from the offer
             # DHCPOptions2-6 are already set from dhcp_offer
-            self.dhcp_data = self.OP + self.HTYPE + self.HLEN + self.HOPS + self.XID + self.SECS + self.FLAGS + self.CIADDR + self.YIADDR + self.SIADDR + self.GIADDR + self.CHADDR1 + self.CHADDR2 + self.CHADDR3 + self.CHADDR4 + self.CHADDR5 + self.Magiccookie + self.DHCPOptions1 + self.DHCPOptions2 + self.DHCPOptions3 + self.DHCPOptions4 + self.DHCPOptions5 + self.DHCPOptions6
+            self.DHCPOptionsEnd = getattr(dhcp_offer, "DHCPOptionsEnd", bytes([255]))
+            self.dhcp_data = (
+                self.OP + self.HTYPE + self.HLEN + self.HOPS + self.XID + self.SECS + self.FLAGS
+                + self.CIADDR + self.YIADDR + self.SIADDR + self.GIADDR
+                + self.CHADDR1 + self.CHADDR2 + self.CHADDR3 + self.CHADDR4 + self.CHADDR5
+                + self.Magiccookie
+                + self.DHCPOptions1 + self.DHCPOptions2 + self.DHCPOptions3 + self.DHCPOptions4 + self.DHCPOptions5 + self.DHCPOptions6
+                + self.DHCPOptionsEnd
+            )

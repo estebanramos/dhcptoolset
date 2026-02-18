@@ -41,6 +41,30 @@ def get_main_network_info():
         }
     else:
         return None  # No IPv4 configuration found for the default interface
+
+
+def get_interface_ipv4_info(iface: str):
+    """Get IPv4 info for a specific interface.
+
+    Returns:
+        dict with keys: Interface, Client Address, Netmask, Gateway, Network
+        or None if the interface has no IPv4 config.
+    """
+    interface_info = ni.ifaddresses(iface)
+    if ni.AF_INET not in interface_info:
+        return None
+    interface_ipv4_info = interface_info[ni.AF_INET][0]
+    client_address = interface_ipv4_info["addr"]
+    netmask = interface_ipv4_info["netmask"]
+    network = ipaddress.IPv4Network(f"{client_address}/{netmask}", strict=False)
+    network_address = f"{network.network_address}/{network.prefixlen}"
+    return {
+        "Interface": iface,
+        "Client Address": client_address,
+        "Netmask": netmask,
+        "Gateway": get_default_gateway(iface),
+        "Network": network_address,
+    }
     
 def valid_interface(iface):
     """Check if a network interface exists on the system.
@@ -102,6 +126,16 @@ def generate_random_ip(iface):
     network_hosts = list(network.hosts())
     random_ip = random.choice(network_hosts)
     return str(random_ip)
+
+
+def get_mac_bytes(iface: str) -> bytes:
+    """Get the MAC address of an interface as 6 raw bytes."""
+    addresses = ni.ifaddresses(iface)
+    link = addresses.get(ni.AF_LINK)
+    if not link:
+        raise RuntimeError(f"No MAC address found for interface {iface}")
+    mac_str = link[0]["addr"]  # e.g. "aa:bb:cc:dd:ee:ff"
+    return bytes(int(part, 16) for part in mac_str.split(":"))
 
 def get_vendor(mac_address):
     url = f"https://api.macvendors.com/{mac_address}"
