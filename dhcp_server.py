@@ -2,7 +2,7 @@ import socket
 import subprocess
 import os
 import platform
-from utils import decode_hexstring_offer_options
+from utils import decode_hexstring_offer_options, get_vendor
 from model import DHCPMODEL, DHCPOFFER, DHCPREQUEST, DHCPPACK, DHCPDISCOVER
 from rich.console import Console
 from colorama import Fore, Back, Style, init as colorama_init
@@ -139,6 +139,17 @@ def get_dhcp_message_type(dhcp_data: bytes) -> int:
         i += 2 + length
     return 0
 
+def format_mac_for_api(mac_bytes: bytes) -> str:
+    """Format MAC address bytes to colon-separated string for API lookup.
+    
+    Args:
+        mac_bytes: MAC address as 6 bytes
+        
+    Returns:
+        str: MAC address in format "AA:BB:CC:DD:EE:FF"
+    """
+    return ":".join(f"{b:02X}" for b in mac_bytes)
+
 class DHCP_server(object):
     """DHCP Server implementation for handling DHCP discovery and request packets."""
 
@@ -182,7 +193,7 @@ class DHCP_server(object):
             raise SystemExit(1)
         except OSError as e:
             if "Address already in use" in str(e) or e.errno == 98:  # EADDRINUSE
-                print(Fore.RED + "[X] - " + Style.BRIGHT + f"Server port {self.serverPort} already in use" + Style.RESET_ALL)
+                print(Fore.RED + "[X] - " + Style.BRIGHT + f"Server port {self.serverPort} already in use" + Style.RESET_ALL)        
                 
                 # Try to identify the process using the port
                 process_name, pid = get_process_using_port(self.serverPort)
@@ -218,7 +229,7 @@ class DHCP_server(object):
         offer_key = None  # (xid_bytes, client_mac_6_bytes)
         discover_count = 0
 
-        # 1) Esperar el primer DISCOVER válido
+        # 1) Wait for the first valid DISCOVER
         while True:
             data, address = self.s.recvfrom(MAX_BYTES)
             msg_type = get_dhcp_message_type(data)
@@ -233,11 +244,21 @@ class DHCP_server(object):
             offer_key = (xid, client_mac)
             discover_count = 1
 
+            mac_str = "-".join(f"{b:02X}" for b in client_mac)
+            vendor_info = ""
+            if getattr(args, "detect_device", False):
+                mac_for_api = format_mac_for_api(client_mac)
+                vendor = get_vendor(mac_for_api)
+                if vendor and not vendor.startswith("Error") and not vendor.startswith("Couldn't"):
+                    vendor_info = f" [{vendor}]"
+                else:
+                    vendor_info = " [Unknown vendor]"
+
             print(
                 Fore.CYAN
                 + "[✓] - "
                 + Style.BRIGHT
-                + f"DISCOVER (CLIENT → SERVER) de {'-'.join(f'{b:02X}' for b in client_mac)} "
+                + f"DISCOVER (CLIENT → SERVER) from {mac_str}{vendor_info} "
                 + f"XID={xid.hex()}"
                 + Style.RESET_ALL
             )
@@ -251,9 +272,8 @@ class DHCP_server(object):
                 Fore.BLUE
                 + "[i] - "
                 + Style.BRIGHT
-                + "OFFER (SERVER → CLIENT) para "
-                + "-".join(f"{b:02X}" for b in client_mac)
-                + f" IP={'.'.join(str(b) for b in offer.YIADDR)}"
+                + f"OFFER (SERVER → CLIENT) for {mac_str}{vendor_info} "
+                + f"IP={'.'.join(str(b) for b in offer.YIADDR)}"
                 + Style.RESET_ALL
             )
             DHCPMODEL.print_table_data(offer.dhcp_data)
@@ -262,7 +282,7 @@ class DHCP_server(object):
             self.s.sendto(offer.dhcp_data, dest)
             break
 
-        # 2) Esperar opcionalmente un REQUEST correspondiente, con timeout
+        # 2) Optionally wait for a corresponding REQUEST, with timeout
         xid, client_mac = offer_key
         self.s.settimeout(3.0)
         try:
@@ -271,7 +291,7 @@ class DHCP_server(object):
                 msg_type = get_dhcp_message_type(data)
 
                 if msg_type == 1:
-                # Repeated DISCOVERs from the same client/XID: ignore up to a limit
+                    # Repeated DISCOVERs from the same client/XID: ignore up to a limit
                     tmp = DHCPDISCOVER()
                     tmp.from_raw_data(data)
                     if tmp.XID == xid and (tmp.CHADDR1 + tmp.CHADDR2[:2]) == client_mac:
@@ -313,11 +333,22 @@ class DHCP_server(object):
                         )
                         continue
 
+                    # Get vendor info for REQUEST if enabled
+                    request_mac_str = "-".join(f"{b:02X}" for b in client_mac)
+                    request_vendor_info = ""
+                    if getattr(args, "detect_device", False):
+                        request_mac_for_api = format_mac_for_api(client_mac)
+                        request_vendor = get_vendor(request_mac_for_api)
+                        if request_vendor and not request_vendor.startswith("Error") and not request_vendor.startswith("Couldn't"):
+                            request_vendor_info = f" [{request_vendor}]"
+                        else:
+                            request_vendor_info = " [Unknown vendor]"
+
                     print(
                         Fore.CYAN
                         + "[✓] - "
                         + Style.BRIGHT
-                        + f"REQUEST (CLIENT → SERVER) from {'-'.join(f'{b:02X}' for b in client_mac)} "
+                        + f"REQUEST (CLIENT → SERVER) from {request_mac_str}{request_vendor_info} "
                         + f"XID={xid.hex()}"
                         + Style.RESET_ALL
                     )
@@ -331,7 +362,7 @@ class DHCP_server(object):
                         Fore.BLUE
                         + "[i] - "
                         + Style.BRIGHT
-                        + f"ACK (SERVER → CLIENT) for {'-'.join(f'{b:02X}' for b in client_mac)} "
+                        + f"ACK (SERVER → CLIENT) for {request_mac_str}{request_vendor_info} "
                         + f"IP={'.'.join(str(b) for b in ack.YIADDR)}"
                         + Style.RESET_ALL
                     )
@@ -344,13 +375,13 @@ class DHCP_server(object):
                         Fore.GREEN
                         + "[✓] - "
                         + Style.BRIGHT
-                        + f"Full DHCP cycle completed for {'-'.join(f'{b:02X}' for b in client_mac)} "
+                        + f"Full DHCP cycle completed for {request_mac_str}{request_vendor_info} "
                         + f"→ {'.'.join(str(b) for b in ack.YIADDR)}"
                         + Style.RESET_ALL
                     )
                     break
 
-                # Otros tipos: ignorar
+                # Other types: ignore
                 continue
         except KeyboardInterrupt:
             print(
@@ -361,13 +392,13 @@ class DHCP_server(object):
                 + Style.RESET_ALL
             )
         except Exception as e:
-                print(
-                    Fore.RED
-                    + "[X] - "
-                    + Style.BRIGHT
-                    + f"Error in DHCP cycle: {e}"
-                    + Style.RESET_ALL
-                )
+            print(
+                Fore.RED
+                + "[X] - "
+                + Style.BRIGHT
+                + f"Error in DHCP cycle: {e}"
+                + Style.RESET_ALL
+            )
         finally:
             # Quitar timeout y terminar la función (un solo ciclo)
             try:

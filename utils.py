@@ -41,7 +41,7 @@ def get_main_network_info():
         }
     else:
         return None  # No IPv4 configuration found for the default interface
-
+    
 
 def get_interface_ipv4_info(iface: str):
     """Get IPv4 info for a specific interface.
@@ -147,3 +147,73 @@ def get_vendor(mac_address):
             return "Couldn't find MAC Vendor"
     except Exception as e:
         return f"Error: {str(e)}"
+
+
+# --- Offline heuristic device fingerprinting ---------------------------------
+
+_OUI_DEVICE_MAP = {
+    # These are just a few common examples; this mapping is heuristic, not exact.
+    # Format: "AA:BB:CC": "Device category"
+    "AC:CF:23": "Android phone/tablet (Samsung)",
+    "60:21:C0": "Android phone/tablet (Samsung)",
+    "F8:27:93": "Android phone/tablet (Xiaomi)",
+    "FC:64:BA": "Android phone/tablet (Huawei/Honor)",
+    "D8:9E:F3": "Android phone/tablet (Motorola/Lenovo)",
+    "FC:FB:FB": "Apple device (iPhone/iPad/Mac)",
+    "BC:92:6B": "Apple device (iPhone/iPad/Mac)",
+    "10:40:F3": "Apple device (iPhone/iPad/Mac)",
+    "00:1A:79": "Router / AP (TP-Link)",
+    "F4:F5:D8": "Router / AP (Ubiquiti)",
+    "00:24:D7": "Router / AP (Cisco/Linksys)",
+    "B0:99:D7:": "Samsung Electronics Co.,Ltd",
+    "5C-0C-E6": "Nintendo Co.,Ltd"
+}
+
+
+def _mac_to_oui(mac: str) -> str:
+    """Normalize MAC string and return its OUI (first 3 octets) in AA:BB:CC form."""
+    mac = mac.replace("-", ":").upper()
+    parts = mac.split(":")
+    if len(parts) < 3:
+        return ""
+    return ":".join(parts[:3])
+
+
+def guess_device_type(mac: str, fingerprint: str | None = None) -> str:
+    """Best-effort guess of device type based on MAC and optional fingerprint string.
+
+    Args:
+        mac: MAC address string like 'AA-BB-CC-DD-EE-FF' or 'AA:BB:CC:DD:EE:FF'
+        fingerprint: Optional extra hint, e.g. DHCP vendor class ('android-dhcp-16'),
+                     hostname, or vendor name.
+
+    Returns:
+        A short human-readable category like 'Android phone/tablet', 'Apple device', etc.,
+        or 'Unknown device' if no heuristic matches.
+    """
+    oui = _mac_to_oui(mac)
+    if oui in _OUI_DEVICE_MAP:
+        return _OUI_DEVICE_MAP[oui]
+
+    if fingerprint:
+        f = fingerprint.lower()
+        if "android" in f:
+            return "Android device"
+        if "iphone" in f or "ipad" in f or "ios" in f:
+            return "Apple iOS device"
+        if "mac" in f or "macbook" in f or "imac" in f:
+            return "Apple macOS device"
+        if "windows" in f or "msft" in f:
+            return "Windows device"
+        if "roku" in f:
+            return "Roku / streaming device"
+        if "sonos" in f:
+            return "Sonos speaker"
+        if "playstation" in f or "ps4" in f or "ps5" in f:
+            return "Sony PlayStation"
+        if "xbox" in f:
+            return "Microsoft Xbox"
+        if "smart-tv" in f or "tv" in f:
+            return "Smart TV"
+
+    return "Unknown device"

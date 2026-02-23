@@ -4,9 +4,11 @@ import socket
 import struct
 import random
 import time
-from dhcp_server import DHCP_server, PortInUseError
+from dhcp_server import DHCP_server, PortInUseError, get_dhcp_message_type
+from dhcp_fake_client import run_fake_client, run_fake_client_sniffer
 from rich.console import Console
 from rich.table import Table
+from rich.live import Live
 from rich import box
 from colorama import Fore, Back, Style, init as colorama_init
 
@@ -135,129 +137,170 @@ dhcp_server_parser.add_argument('-s', '--server', help = 'DHCP Server', required
 dhcp_server_parser.add_argument('-r', '--router', help = 'Default Gateway IP', required = False, type=is_valid_ip)
 dhcp_server_parser.add_argument('-o', '--offer', help = 'IP to offer to Clients. Leave blank to random ip', type=is_valid_ip)
 dhcp_server_parser.add_argument('--dns', help='Comma-separated DNS servers to offer to clients (default: router IP)', required=False)
-
-def build_discover_packet(iface: str):
-    """Build a minimal DHCP DISCOVER packet using the MAC of the given interface."""
-    mac = utils.get_mac_bytes(iface)
-    xid = random.getrandbits(32).to_bytes(4, byteorder="big")
-
-    op = b"\x01"        # BOOTREQUEST
-    htype = b"\x01"     # Ethernet
-    hlen = b"\x06"      # MAC length
-    hops = b"\x00"
-    secs = b"\x00\x00"
-    flags = b"\x00\x00"
-    ciaddr = b"\x00\x00\x00\x00"
-    yiaddr = b"\x00\x00\x00\x00"
-    siaddr = b"\x00\x00\x00\x00"
-    giaddr = b"\x00\x00\x00\x00"
-
-    chaddr = mac + b"\x00" * (16 - len(mac))  # 16 bytes
-    sname = b"\x00" * 64
-    file_field = b"\x00" * 128
-    magic_cookie = b"\x63\x82\x53\x63"
-
-    # Options: DHCP Message Type (53=Discover), Parameter Request List (55), END (255)
-    options = b""
-    options += b"\x35\x01\x01"  # Option 53, len 1, DHCPDISCOVER
-    options += b"\x37\x04\x01\x03\x06\x2a"  # Option 55: request 1,3,6,42 (just as example)
-    options += b"\xff"  # END
-
-    dhcp_packet = (
-        op
-        + htype
-        + hlen
-        + hops
-        + xid
-        + secs
-        + flags
-        + ciaddr
-        + yiaddr
-        + siaddr
-        + giaddr
-        + chaddr
-        + sname
-        + file_field
-        + magic_cookie
-        + options
-    )
-    return dhcp_packet, xid, mac
+dhcp_server_parser.add_argument('--detect-device', action='store_true', help='Detect device vendor/type from MAC address using online API', required=False)
 
 
 def fake_client_action(args):
-    """Minimal fake DHCP client to discover active DHCP servers on the network."""
+    """Thin argparse wrapper for the fake DHCP client implementation."""
+    vendor_class = getattr(args, "vendor_class", None)
+    run_fake_client(args.iface, vendor_class)
 
+dhcp_client_parser = subparsers.add_parser('fake-client', help='Send fake DHCP requests to the network')
+dhcp_client_parser.set_defaults(func=fake_client_action)
+dhcp_client_parser.add_argument('-i', '--iface', help='Network interface to use', required=True, type=is_valid_interface)
+dhcp_client_parser.add_argument(
+    '--vendor-class',
+    help='Optional DHCP vendor class (option 60) to send in the fake DISCOVER. If omitted, a realistic-looking default is chosen.',
+    required=False,
+)
+
+
+def fake_client_sniffer_action(args):
+    """Fake DHCP client that sniffs responses at link layer (AF_PACKET)."""
+    vendor_class = getattr(args, "vendor_class", None)
+    run_fake_client_sniffer(args.iface, vendor_class)
+
+
+dhcp_client_sniffer_parser = subparsers.add_parser(
+    'fake-client-sniffer',
+    help='Send fake DHCP DISCOVER and sniff DHCP responses at link layer (no UDP 68 bind needed)',
+)
+dhcp_client_sniffer_parser.set_defaults(func=fake_client_sniffer_action)
+dhcp_client_sniffer_parser.add_argument(
+    '-i', '--iface', help='Network interface to use', required=True, type=is_valid_interface
+)
+dhcp_client_sniffer_parser.add_argument(
+    '--vendor-class',
+    help='Optional DHCP vendor class (option 60) to send in the fake DISCOVER. If omitted, a realistic-looking default is chosen.',
+    required=False,
+)
+
+
+def passive_listen_action(args):
+    """Passively listen for DHCP clients on the network without responding.
+
+    Shows a live-updating table of discovered devices.
+    """
     if not check_root_privileges():
         print(
             Fore.RED
             + "[X] - "
             + Style.BRIGHT
-            + "Root privileges required to send/receive DHCP packets (ports 67/68)."
+            + "Root privileges required to listen on DHCP server port 67."
+            + Style.RESET_ALL
+        )
+        print(
+            Fore.CYAN
+            + "[i] - "
+            + Style.BRIGHT
+            + f"Please run with sudo: sudo python3 dhcptoolset.py listen -i {args.iface}"
             + Style.RESET_ALL
         )
         sys.exit(1)
 
-    discover, xid, mac = build_discover_packet(args.iface)
-    mac_str = "-".join(f"{b:02X}" for b in mac)
-
+    console = Console()
     print(
-        Fore.CYAN
-        + "[i] - "
+        Fore.GREEN
+        + "[#] - "
         + Style.BRIGHT
-        + f"Sending DHCP DISCOVER from {mac_str} on interface {args.iface}..."
+        + f"Starting passive DHCP listener on interface {args.iface} (no responses will be sent)..."
         + Style.RESET_ALL
     )
 
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # Create a UDP socket bound to DHCP server port 67 on the given interface
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        # Muchos sistemas ya tienen un cliente DHCP escuchando en 68.
-        # En lugar de bindear a 68, dejamos que el SO elija un puerto efímero.
-        s.bind(("", 0))
+        # Bind to specific interface so we only capture traffic on that NIC
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, args.iface.encode())
+        s.bind(("0.0.0.0", 67))
     except PermissionError:
         print(
             Fore.RED
             + "[X] - "
             + Style.BRIGHT
-            + "Could not create UDP socket for DHCP. Please run with sudo."
+            + "Permission denied while binding passive listener to port 67."
+            + Style.RESET_ALL
+        )
+        sys.exit(1)
+    except OSError as e:
+        print(
+            Fore.RED
+            + "[X] - "
+            + Style.BRIGHT
+            + f"Could not bind passive listener socket: {e}"
             + Style.RESET_ALL
         )
         sys.exit(1)
 
-    local_port = s.getsockname()[1]
+    s.settimeout(1.0)
 
-    # Enviamos DISCOVER desde nuestro puerto efímero hacia el puerto 67 del/los servidor(es)
-    s.sendto(discover, ("255.255.255.255", 67))
+    # Track seen clients by MAC
+    clients = {}
 
-    s.settimeout(3.0)
-    seen_servers = set()
+    def build_table():
+        table = Table(
+            title="Passive DHCP Clients (listen-only)",
+            box=box.ROUNDED,
+            show_header=True,
+        )
+        table.add_column("MAC", style="cyan", no_wrap=True)
+        table.add_column("Device Type", style="bright_cyan")
+        table.add_column("Hostname", style="green")
+        table.add_column("Vendor Class", style="magenta")
+        table.add_column("Message Types", style="yellow")
+        table.add_column("First Seen", style="white")
+        table.add_column("Last Seen", style="white")
+        table.add_column("Packets", style="blue")
 
-    start = time.time()
-    while time.time() - start < 3.0:
-        try:
-            data, addr = s.recvfrom(1024)
-        except socket.timeout:
-            break
+        for mac, info in sorted(clients.items()):
+            table.add_row(
+                mac,
+                info.get("device_type") or "-",
+                info.get("hostname") or "-",
+                info.get("vendor_class") or "-",
+                ", ".join(sorted(info.get("msg_types", set()))) or "-",
+                info.get("first_seen") or "-",
+                info.get("last_seen") or "-",
+                str(info.get("count", 0)),
+            )
+        return table
 
-        src_ip, src_port = addr
-        # Sólo nos interesan respuestas de servidores DHCP (src port 67)
-        if src_port != 67:
-            continue
+    def parse_client_info(data: bytes):
+        # Basic BOOTP/DHCP header parsing
+        if len(data) < 240:
+            return None
 
-        # Check XID matches
-        if data[4:8] != xid:
-            continue
-
+        xid = data[4:8].hex().upper()
+        ciaddr = ".".join(str(b) for b in data[12:16])
         yiaddr = ".".join(str(b) for b in data[16:20])
+        chaddr = data[28:28 + 16]
+        mac_bytes = chaddr[:6]
+        mac_str = "-".join(f"{b:02X}" for b in mac_bytes)
 
-        # Parse options to get message type and Server-ID
+        msg_type_code = get_dhcp_message_type(data)
+        msg_type_map = {
+            1: "DISCOVER",
+            2: "OFFER",
+            3: "REQUEST",
+            4: "DECLINE",
+            5: "ACK",
+            6: "NAK",
+            7: "RELEASE",
+            8: "INFORM",
+        }
+        msg_type = msg_type_map.get(msg_type_code, f"TYPE-{msg_type_code}")
+
+        hostname = ""
+        vendor_class = ""
+
+        # Parse options for hostname (12) and vendor class (60)
         options = data[240:]
-        msg_type = None
-        server_id = None
         i = 0
         while i < len(options):
             code = options[i]
-            if code == 255:
+            if code == 255:  # End
                 break
             if i + 1 >= len(options):
                 break
@@ -265,41 +308,98 @@ def fake_client_action(args):
             if i + 2 + length > len(options):
                 break
             value = options[i + 2 : i + 2 + length]
-            if code == 53 and length >= 1:
-                msg_type = value[0]
-            if code == 54 and length == 4:
-                server_id = ".".join(str(b) for b in value)
+
+            if code == 12:  # Hostname
+                try:
+                    hostname = value.decode("utf-8", errors="ignore")
+                except Exception:
+                    hostname = ""
+            elif code == 60:  # Vendor class identifier
+                try:
+                    vendor_class = value.decode("utf-8", errors="ignore")
+                except Exception:
+                    vendor_class = ""
+
             i += 2 + length
 
-        if msg_type not in (2, 5):  # Offer or ACK
-            continue
+        return {
+            "mac": mac_str,
+            "xid": xid,
+            "ciaddr": ciaddr,
+            "yiaddr": yiaddr,
+            "msg_type": msg_type,
+            "hostname": hostname,
+            "vendor_class": vendor_class,
+        }
 
-        key = server_id or src_ip
-        if key in seen_servers:
-            continue
-        seen_servers.add(key)
+    with Live(build_table(), console=console, refresh_per_second=2) as live:
+        try:
+            while True:
+                try:
+                    data, addr = s.recvfrom(1024)
+                except socket.timeout:
+                    continue
 
-        tipo = "OFFER" if msg_type == 2 else "ACK"
-        print(
-            Fore.GREEN
-            + "[✓] - "
-            + Style.BRIGHT
-            + f"Servidor DHCP detectado: {key} (src IP {src_ip}) → ofreció IP {yiaddr} ({tipo})"
-            + Style.RESET_ALL
-        )
+                info = parse_client_info(data)
+                if not info:
+                    continue
 
-    if not seen_servers:
-        print(
-            Fore.YELLOW
-            + "[!] - "
-            + Style.BRIGHT
-            + "No se detectaron respuestas DHCP (OFFER/ACK) en la red."
-            + Style.RESET_ALL
-        )
+                # Only care about client-originated messages (DISCOVER/REQUEST/INFORM/RELEASE)
+                if info["msg_type"] not in ("DISCOVER", "REQUEST", "INFORM", "RELEASE"):
+                    continue
 
-dhcp_client_parser = subparsers.add_parser('fake-client', help='Send fake DHCP requests to the network')
-dhcp_client_parser.set_defaults(func=fake_client_action)
-dhcp_client_parser.add_argument('-i', '--iface', help='Network interface to use', required=True, type=is_valid_interface)
+                now = time.strftime("%H:%M:%S")
+                mac = info["mac"]
+                entry = clients.get(mac)
+                if not entry:
+                    device_type = utils.guess_device_type(
+                        mac, info.get("vendor_class") or info.get("hostname")
+                    )
+                    clients[mac] = {
+                        "device_type": device_type,
+                        "hostname": info["hostname"],
+                        "vendor_class": info["vendor_class"],
+                        "msg_types": {info["msg_type"]},
+                        "first_seen": now,
+                        "last_seen": now,
+                        "count": 1,
+                    }
+                else:
+                    # Recompute device type if we gain more fingerprint info
+                    fingerprint_hint = (
+                        info.get("vendor_class")
+                        or info.get("hostname")
+                        or entry.get("vendor_class")
+                        or entry.get("hostname")
+                    )
+                    entry["device_type"] = utils.guess_device_type(mac, fingerprint_hint)
+                    entry["hostname"] = info["hostname"] or entry.get("hostname") or ""
+                    entry["vendor_class"] = info["vendor_class"] or entry.get("vendor_class") or ""
+                    entry.setdefault("msg_types", set()).add(info["msg_type"])
+                    entry["last_seen"] = now
+                    entry["count"] = entry.get("count", 0) + 1
+
+                # Refresh live table with updated client list
+                live.update(build_table())
+
+        except KeyboardInterrupt:
+            print(
+                Fore.YELLOW
+                + "\n[!] - "
+                + Style.BRIGHT
+                + "Passive DHCP listener stopped by user."
+                + Style.RESET_ALL
+            )
+        finally:
+            s.close()
+
+dhcp_listen_parser = subparsers.add_parser(
+    "listener", help="Passively listen for DHCP clients (no responses, live table)"
+)
+dhcp_listen_parser.set_defaults(func=passive_listen_action)
+dhcp_listen_parser.add_argument(
+    "-i", "--iface", help="Network interface to listen on", required=True, type=is_valid_interface
+)
 
 def main():
     """Main entry point for DHCP Toolset."""
